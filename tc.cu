@@ -58,6 +58,10 @@ __global__ void WMMAF16TensorCore(double *A, double *B, double *C, double *D)
   wmma::fragment<wmma::matrix_b, M, N, K, double, wmma::col_major> b_frag;
   wmma::fragment<wmma::accumulator, M, N, K, double> ab_frag;
   wmma::fragment<wmma::accumulator, M, N, K, double> c_frag;
+  wmma::fragment<wmma::accumulator, M, N, K, double> c0_frag;
+  wmma::fragment<wmma::accumulator, M, N, K, double> c1_frag;
+  wmma::fragment<wmma::accumulator, M, N, K, double> c2_frag;
+  wmma::fragment<wmma::accumulator, M, N, K, double> c3_frag;
   
   wmma::fill_fragment(ab_frag, 0.0f);
 
@@ -70,6 +74,10 @@ __global__ void WMMAF16TensorCore(double *A, double *B, double *C, double *D)
   wmma::load_matrix_sync(a_frag, A + 0 + a_row * M_TOTAL, M_TOTAL);
   wmma::load_matrix_sync(b_frag, B + 0 + 0 * K_TOTAL, K_TOTAL);
   wmma::load_matrix_sync(c_frag, C + c_col + c_row * N_TOTAL, N_TOTAL, wmma::mem_row_major);
+  wmma::load_matrix_sync(c0_frag, C + c_col + c_row * N_TOTAL, N_TOTAL, wmma::mem_row_major);
+  wmma::load_matrix_sync(c1_frag, C + c_col + c_row * N_TOTAL, N_TOTAL, wmma::mem_row_major);
+  wmma::load_matrix_sync(c2_frag, C + c_col + c_row * N_TOTAL, N_TOTAL, wmma::mem_row_major);
+  wmma::load_matrix_sync(c3_frag, C + c_col + c_row * N_TOTAL, N_TOTAL, wmma::mem_row_major);
   for (int k=0; k<K_TOTAL; k+=K) {
     a_col = b_col = k;
 
@@ -79,7 +87,11 @@ __global__ void WMMAF16TensorCore(double *A, double *B, double *C, double *D)
       // wmma::load_matrix_sync(b_frag, B + b_col + b_col * K_TOTAL, K_TOTAL);
 
       // Perform the matrix multiplication
-      wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+      // wmma::mma_sync(ab_frag, a_frag, b_frag, ab_frag);
+      wmma::mma_sync(c0_frag, a_frag, b_frag, c0_frag);
+      wmma::mma_sync(c1_frag, a_frag, b_frag, c1_frag);
+      wmma::mma_sync(c2_frag, a_frag, b_frag, c2_frag);
+      wmma::mma_sync(c3_frag, a_frag, b_frag, c3_frag);
     }
     // wmma::store_matrix_sync(D + c_col + c_row * N_TOTAL, c_frag, N_TOTAL, wmma::mem_row_major);
   }
@@ -90,9 +102,9 @@ __global__ void WMMAF16TensorCore(double *A, double *B, double *C, double *D)
   if (c_row < M_TOTAL && c_col < N_TOTAL) {
     // wmma::load_matrix_sync(c_frag, C + c_col + c_row * N_TOTAL, N_TOTAL, wmma::mem_row_major);
 
-    // for (int i = 0; i < c_frag.num_elements; i++) {
-    //   c_frag.x[i] = ab_frag.x[i] + c_frag.x[i];
-    // }
+    for (int i = 0; i < c_frag.num_elements; i++) {
+      c_frag.x[i] = c0_frag.x[i] + c1_frag.x[i]+c2_frag.x[i]+c3_frag.x[i];;
+    }
 
     // Store the output
     wmma::store_matrix_sync(D + c_col + c_row * N_TOTAL, c_frag, N_TOTAL, wmma::mem_row_major);
@@ -152,7 +164,7 @@ cudaError_t CalcWMMA(double *A, double *B, double *C, double *D)
   // for Performance Metrics
   printf("[+] GPU(with Tensor Cores) Elapsed Time: %f ms\n", milliseconds);
   // references from https://devblogs.nvidia.com/how-implement-performance-metrics-cuda-cc/
-  printf("[+] TFLOPS: %.2f\n", ((double)M_TOTAL * N_TOTAL* K_TOTAL * 2)*repeat / milliseconds / 1e9);
+  printf("[+] TFLOPS: %.2f\n", ((double)M_TOTAL *4* N_TOTAL* K_TOTAL * 2)*repeat / milliseconds / 1e9);
   printf("power from %u W to %u W\n", 
                       power1/1000, power2/1000);
     // printf("%f, ", gflops);
