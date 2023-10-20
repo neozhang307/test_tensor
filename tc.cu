@@ -20,9 +20,9 @@
 #define WARP_SIZE 32
 
 // MMA matrix tile dimensions.
-#define M 8
-#define N 8
-#define K 4
+#define M 16
+#define N 16
+#define K 8
 
 // GEMM configuration.
 #define M_TILES 512
@@ -37,7 +37,7 @@
 //__global__ void WMMAINT8()
 using namespace nvcuda;
 
-__host__ void InitMatrix(double *A, double *B, double *C)
+__host__ void InitMatrix(float *A, float *B, float *C)
 {
   for (int i = 0; i < M_TOTAL*K_TOTAL; i++)
     A[i] = (rand() % 1000 / 1000.0f);
@@ -49,19 +49,25 @@ __host__ void InitMatrix(double *A, double *B, double *C)
 
 
 
-__global__ void WMMAF16TensorCore(double *A, double *B, double *C, double *D)
+__global__ void WMMAF16TensorCore(float *A, float *B, float *C, float *D)
 {
   int ix = (blockIdx.x * blockDim.x + threadIdx.x)/WARP_SIZE;
   int iy = (blockIdx.y * blockDim.y + threadIdx.y);
   
-  wmma::fragment<wmma::matrix_a, M, N, K, double, wmma::row_major> a_frag;
-  wmma::fragment<wmma::matrix_b, M, N, K, double, wmma::col_major> b_frag;
-  wmma::fragment<wmma::accumulator, M, N, K, double> ab_frag;
-  wmma::fragment<wmma::accumulator, M, N, K, double> c_frag;
-  wmma::fragment<wmma::accumulator, M, N, K, double> c0_frag;
-  wmma::fragment<wmma::accumulator, M, N, K, double> c1_frag;
-  wmma::fragment<wmma::accumulator, M, N, K, double> c2_frag;
-  wmma::fragment<wmma::accumulator, M, N, K, double> c3_frag;
+  wmma::fragment<wmma::matrix_a, M, N, K, wmma::precision::tf32, wmma::row_major> a0_frag;
+  wmma::fragment<wmma::matrix_a, M, N, K, wmma::precision::tf32, wmma::row_major> a1_frag;
+  wmma::fragment<wmma::matrix_a, M, N, K, wmma::precision::tf32, wmma::row_major> a2_frag;
+  wmma::fragment<wmma::matrix_a, M, N, K, wmma::precision::tf32, wmma::row_major> a3_frag;
+  wmma::fragment<wmma::matrix_b, M, N, K, wmma::precision::tf32, wmma::col_major> b0_frag;
+  wmma::fragment<wmma::matrix_b, M, N, K, wmma::precision::tf32, wmma::col_major> b1_frag;
+  wmma::fragment<wmma::matrix_b, M, N, K, wmma::precision::tf32, wmma::col_major> b2_frag;
+  wmma::fragment<wmma::matrix_b, M, N, K, wmma::precision::tf32, wmma::col_major> b3_frag;
+  wmma::fragment<wmma::accumulator, M, N, K, float> ab_frag;
+  wmma::fragment<wmma::accumulator, M, N, K, float> c_frag;
+  wmma::fragment<wmma::accumulator, M, N, K, float> c0_frag;
+  wmma::fragment<wmma::accumulator, M, N, K, float> c1_frag;
+  wmma::fragment<wmma::accumulator, M, N, K, float> c2_frag;
+  wmma::fragment<wmma::accumulator, M, N, K, float> c3_frag;
   
   wmma::fill_fragment(ab_frag, 0.0f);
 
@@ -71,8 +77,27 @@ __global__ void WMMAF16TensorCore(double *A, double *B, double *C, double *D)
   a_row = ix * M;
   b_row = iy * N;
 
-  wmma::load_matrix_sync(a_frag, A + 0 + a_row * M_TOTAL, M_TOTAL);
-  wmma::load_matrix_sync(b_frag, B + 0 + 0 * K_TOTAL, K_TOTAL);
+  wmma::load_matrix_sync(a0_frag, A + 0 + a_row * M_TOTAL, M_TOTAL);
+  wmma::load_matrix_sync(a1_frag, A + 1 + a_row * M_TOTAL, M_TOTAL);
+  wmma::load_matrix_sync(a2_frag, A + 2 + a_row * M_TOTAL, M_TOTAL);
+  wmma::load_matrix_sync(a3_frag, A + 3 + a_row * M_TOTAL, M_TOTAL);
+  for (int t = 0; t < a0_frag.num_elements; t++) {
+        a0_frag.x[t] = wmma::__float_to_tf32(a0_frag.x[t]);
+        a1_frag.x[t] = wmma::__float_to_tf32(a1_frag.x[t]);
+        a2_frag.x[t] = wmma::__float_to_tf32(a2_frag.x[t]);
+        a3_frag.x[t] = wmma::__float_to_tf32(a3_frag.x[t]);
+    }
+
+  wmma::load_matrix_sync(b0_frag, B + 0 + 0 * K_TOTAL, K_TOTAL);
+  wmma::load_matrix_sync(b1_frag, B + 0 + 0 * K_TOTAL, K_TOTAL);
+  wmma::load_matrix_sync(b2_frag, B + 0 + 0 * K_TOTAL, K_TOTAL);
+  wmma::load_matrix_sync(b3_frag, B + 0 + 0 * K_TOTAL, K_TOTAL);
+for (int t = 0; t < b0_frag.num_elements; t++) {
+        b0_frag.x[t] = wmma::__float_to_tf32(b0_frag.x[t]);
+        b1_frag.x[t] = wmma::__float_to_tf32(b1_frag.x[t]);
+        b2_frag.x[t] = wmma::__float_to_tf32(b2_frag.x[t]);
+        b3_frag.x[t] = wmma::__float_to_tf32(b3_frag.x[t]);
+    }
   wmma::load_matrix_sync(c_frag, C + c_col + c_row * N_TOTAL, N_TOTAL, wmma::mem_row_major);
   wmma::load_matrix_sync(c0_frag, C + c_col + c_row * N_TOTAL, N_TOTAL, wmma::mem_row_major);
   wmma::load_matrix_sync(c1_frag, C + c_col + c_row * N_TOTAL, N_TOTAL, wmma::mem_row_major);
@@ -88,10 +113,10 @@ __global__ void WMMAF16TensorCore(double *A, double *B, double *C, double *D)
 
       // Perform the matrix multiplication
       // wmma::mma_sync(ab_frag, a_frag, b_frag, ab_frag);
-      wmma::mma_sync(c0_frag, a_frag, b_frag, c0_frag);
-      wmma::mma_sync(c1_frag, a_frag, b_frag, c1_frag);
-      wmma::mma_sync(c2_frag, a_frag, b_frag, c2_frag);
-      wmma::mma_sync(c3_frag, a_frag, b_frag, c3_frag);
+      wmma::mma_sync(c0_frag, a0_frag, b0_frag, c0_frag);
+      wmma::mma_sync(c1_frag, a1_frag, b1_frag, c1_frag);
+      wmma::mma_sync(c2_frag, a2_frag, b2_frag, c2_frag);
+      wmma::mma_sync(c3_frag, a3_frag, b3_frag, c3_frag);
     }
     // wmma::store_matrix_sync(D + c_col + c_row * N_TOTAL, c_frag, N_TOTAL, wmma::mem_row_major);
   }
@@ -111,7 +136,7 @@ __global__ void WMMAF16TensorCore(double *A, double *B, double *C, double *D)
   }
 }
 
-cudaError_t CalcWMMA(double *A, double *B, double *C, double *D)
+cudaError_t CalcWMMA(float *A, float *B, float *C, float *D)
 {
   cudaError_t cuda_status;
   dim3 gridDim, blockDim;
@@ -164,7 +189,7 @@ cudaError_t CalcWMMA(double *A, double *B, double *C, double *D)
   // for Performance Metrics
   printf("[+] GPU(with Tensor Cores) Elapsed Time: %f ms\n", milliseconds);
   // references from https://devblogs.nvidia.com/how-implement-performance-metrics-cuda-cc/
-  printf("[+] TFLOPS: %.2f\n", ((double)M_TOTAL *4* N_TOTAL* K_TOTAL * 2)*repeat / milliseconds / 1e9);
+  printf("[+] TFLOPS: %.2f\n", ((float)M_TOTAL *4* N_TOTAL* K_TOTAL * 2)*repeat / milliseconds / 1e9);
   printf("power from %u W to %u W\n", 
                       power1/1000, power2/1000);
     // printf("%f, ", gflops);
@@ -186,16 +211,16 @@ int main()
 
 
   // Matrix on device
-  double *A;
-  double *B;
-  double *C;
-  double *D;
+  float *A;
+  float *B;
+  float *C;
+  float *D;
 
   // CUDA Unified Memory 
-  cudaMallocManaged((void **)&A, sizeof(double) * M_TOTAL * K_TOTAL);
-  cudaMallocManaged((void **)&B, sizeof(double) * K_TOTAL * N_TOTAL);
-  cudaMallocManaged((void **)&C, sizeof(double) * M_TOTAL * N_TOTAL);
-  cudaMallocManaged((void **)&D, sizeof(double) * M_TOTAL * N_TOTAL);
+  cudaMallocManaged((void **)&A, sizeof(float) * M_TOTAL * K_TOTAL);
+  cudaMallocManaged((void **)&B, sizeof(float) * K_TOTAL * N_TOTAL);
+  cudaMallocManaged((void **)&C, sizeof(float) * M_TOTAL * N_TOTAL);
+  cudaMallocManaged((void **)&D, sizeof(float) * M_TOTAL * N_TOTAL);
   
   // Init matrix A B C on host
   //InitHostMatrix(host_A, host_B, host_C);
