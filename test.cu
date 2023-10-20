@@ -40,7 +40,7 @@
     }
 
 
-typedef float typ;
+typedef double typ;
 
 void init(typ *buf, int size) {
     for (int i = 0; i < size; ++i) {
@@ -80,8 +80,8 @@ void becnmark_cublas(int M, int N, int K, int n_loops) {
     typ* h_B =    (typ*)malloc(b_alloc);
     typ* h_C =    (typ*)malloc(c_alloc);
     typ* h_refC = (typ*)malloc(c_alloc);
-    float alpha = 1.0;
-    float beta = 0.0;
+    typ alpha = 1.0;
+    typ beta = 0.0;
 
     init(h_A, M * lda);
     init(h_B, K * ldb);
@@ -122,11 +122,11 @@ void becnmark_cublas(int M, int N, int K, int n_loops) {
     // cublas
     cublasHandle_t blas_handle;  
     CUBLAS_CHECK(cublasCreate(&blas_handle));
-    CUBLAS_CHECK(cublasSetMathMode( blas_handle, CUBLAS_TENSOR_OP_MATH ));
+    // CUBLAS_CHECK(cublasSetMathMode( blas_handle, CUBLAS_TENSOR_OP_MATH ));
     // CUDA_CHECK(cudaMemcpy( d_C, h_refC, c_alloc, cudaMemcpyHostToDevice));
     for (int run = 0 ; run < n_loops; run ++ ) {
         CUBLAS_CHECK(
-            cublasSgemm (blas_handle, CUBLAS_OP_N, CUBLAS_OP_N, 
+            cublasDgemm (blas_handle, CUBLAS_OP_N, CUBLAS_OP_N, 
                 N, M, K, &alpha, 
                 d_B, ldb, d_A, lda, &beta, d_C, ldc
             )
@@ -136,7 +136,7 @@ void becnmark_cublas(int M, int N, int K, int n_loops) {
     CUDA_CHECK(cudaEventRecord(start));
     for (int run = 0 ; run < n_loops; run ++ ) {
         CUBLAS_CHECK(
-            cublasSgemm (blas_handle, CUBLAS_OP_N, CUBLAS_OP_N, 
+            cublasDgemm (blas_handle, CUBLAS_OP_N, CUBLAS_OP_N, 
                 N, M, K, &alpha, 
                 d_B, ldb, d_A, lda, &beta, d_C, ldc
             )
