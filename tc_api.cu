@@ -33,8 +33,7 @@
 // #define M_TOTAL (M * M_TILES)
 // #define N_TOTAL (N * N_TILES)
 // #define K_TOTAL (K * K_TILES)
-#define ILP 8
-
+#define ILP 4
 //__global__ void WMMAINT8()
 using namespace nvcuda;
 #define cudaCheckError() {                                          \
@@ -47,7 +46,7 @@ using namespace nvcuda;
 
 
 
-__global__ void WMMAF16TensorCore(double *A, double *B,  double *C, int tile_c, int repeat)
+__global__ void WMMAF16TensorCore(double*A, double*B,  double*C, int tile_c, int repeat)
 {
 
   wmma::fragment<wmma::matrix_a, M, N, K, double, wmma::row_major> a_frag;
@@ -60,8 +59,8 @@ __global__ void WMMAF16TensorCore(double *A, double *B,  double *C, int tile_c, 
     wmma::fill_fragment(c_frag[i], 0.0f);
   }
   
-  wmma::load_matrix_sync(a_frag, A , 4);
-  wmma::load_matrix_sync(b_frag, B , 4);
+  wmma::load_matrix_sync(a_frag, A , M);
+  wmma::load_matrix_sync(b_frag, B , N);
   for(int i=0; i<repeat; i++)
   {
     #pragma unroll
@@ -83,27 +82,28 @@ int main(int argc, char const *argv[])
   cudaError_t cuda_status;
   int sm_count;
   cudaDeviceGetAttribute ( &sm_count, cudaDevAttrMultiProcessorCount,0 );
-  int num_warps=2;
+  int num_warps=8;
   int tilesC=sm_count*ILP*N;
-  int sizeofmem=sizeof(double)*64;
+  int sizeofmem=sizeof(double)*16*16;
   int sizeofrmem=sizeofmem*sm_count*ILP*num_warps;
 
-  double *h_mat=(double*)malloc(sizeofmem);
-  double *h_mat2=(double*)malloc(sizeofmem);
-  double *d_A;
-  double *d_B;
-  double *d_C;
+  double*h_mat=(double*)malloc(sizeofmem);
+  double*h_mat2=(double*)malloc(sizeofmem);
+  double*d_A;
+  double*d_B;
+  double*d_C;
   cudaMalloc((void**)&d_A, sizeofmem);
   cudaMalloc((void**)&d_B, sizeofmem);
   cudaMalloc((void**)&d_C, sizeofrmem);
-  double *h_C=(double*)malloc(sizeofrmem);
+  double*h_C=(double*)malloc(sizeofrmem);
 
-  for(int i=0; i<64; i++)
+  for(int i=0; i<16*16; i++)
   {
     h_mat[i]=i+1;
   }
-  int repeat=100000; 
-  int outrepeat=1000;
+
+  int repeat=10000; 
+  int outrepeat=10000;
   cudaMemcpy(d_A, h_mat, sizeofmem, cudaMemcpyHostToDevice);
   cudaMemcpy(d_B, h_mat, sizeofmem, cudaMemcpyHostToDevice);
   
@@ -117,7 +117,6 @@ int main(int argc, char const *argv[])
 
   #pragma omp parallel num_threads(2)
   {
-    
     if (omp_get_thread_num() == 1)
     {
       for(int i=0; i<20;i++)
@@ -131,14 +130,16 @@ int main(int argc, char const *argv[])
         printf("%d power from %u W to %u W\n", i,
                         power1/1000, power2/1000);
         sleep(1);
-
       }
-      
     }
     if (omp_get_thread_num() == 0){
       cudaEvent_t start, stop;
       cudaEventCreate(&start);
       cudaEventCreate(&stop);
+      for(int i=0; i<outrepeat; i++)
+      {
+        WMMAF16TensorCore<<<sm_count,32*num_warps>>>(d_A, d_B, d_C, tilesC, repeat);
+      }
       cudaEventRecord(start);
       for(int i=0; i<outrepeat; i++)
       {
@@ -146,18 +147,13 @@ int main(int argc, char const *argv[])
       }
       cudaEventRecord(stop);
       cudaEventSynchronize(stop);
-      
       cudaEventElapsedTime(&milliseconds, start, stop);
       printf("[+] GPU(with Tensor Cores) Elapsed Time: %f ms\n", milliseconds);
-      printf("[+] TFLOPS: %.2f\n", ((float)8*4*8*2 *ILP*num_warps*sm_count * 2)*repeat*outrepeat / milliseconds / 1e9);
+      printf("[+] TFLOPS: %.2f\n", ((float)M*tilesC*K*num_warps *2)*repeat*outrepeat / milliseconds / 1e9);
   
     }
   }
-
   nvmlShutdown();
-
-  
-  
 
   cudaMemcpy(h_C, d_C, sizeofrmem, cudaMemcpyDeviceToHost);
 
