@@ -10,7 +10,7 @@ my_program:test.cu
 	$(CC) -gencode arch=compute_80,code=sm_80 -gencode arch=compute_70,code=sm_70 -gencode arch=compute_90,code=sm_90  -lcublas -lnvidia-ml -o my_program test.cu
 
 api:tc_api.cu
-	$(CC) -gencode arch=compute_80,code=sm_80 -gencode arch=compute_90,code=sm_90  -lcublas -lnvidia-ml -o api tc_api.cu
+	$(CC) -gencode arch=compute_80,code=sm_80 -gencode arch=compute_90,code=sm_90  -lcublas -lnvidia-ml -Xcompiler -fopenmp -o api tc_api.cu
 
 my_program_old:test.cu
 	$(CC) -gencode arch=compute_80,code=sm_80 -gencode arch=compute_70,code=sm_70 -lcublas -lnvidia-ml -o my_program_old test.cu
