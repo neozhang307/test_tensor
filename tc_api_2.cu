@@ -83,8 +83,8 @@ __global__ void WMMAF16TensorCore(double*A, double*B,  double*C, int tile_c)
 
   {
     {
-      repeat1024(_Pragma("unroll")for(int i=0; i<ILPA;i++){
-        for(int j=0; j<ILPB;j++){wmma::mma_sync(c_frag[i][j], a_frag[i], b_frag[j], c_frag[i][j]);}}
+      repeat1024(
+        _Pragma("unroll")for(int j=0; j<ILPB;j++){_Pragma("unroll")for(int i=0; i<ILPA;i++){wmma::mma_sync(c_frag[i][j], a_frag[i], b_frag[j], c_frag[i][j]);}}
           );
     }
   }
