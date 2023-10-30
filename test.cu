@@ -8,13 +8,13 @@
 // CUDA runtime
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
-
+#include "omp.h"
 // CUBLAS
 #include <cublas_v2.h>
 
 // NVML
 #include <nvml.h>
-
+#include<unistd.h>   
 /**
  * Panic wrapper for unwinding CUDA runtime errors
  */
@@ -108,82 +108,81 @@ void becnmark_cublas(int M, int N, int K, int n_loops) {
   result = nvmlDeviceGetHandleByIndex(0, &device);
   assert(NVML_SUCCESS == result);
   result=nvmlDeviceGetPowerManagementMode(device, &mode);
-  // printf("enabled = %d\n", mode);
+
   result=nvmlDeviceGetPowerUsage(device,&power1);
   assert(NVML_SUCCESS == result);
   cudaDeviceSynchronize();
 
     // Initialization timing
-    cudaEvent_t start, stop;
-    CUDA_CHECK(cudaEventCreate(&start));
-    CUDA_CHECK(cudaEventCreate(&stop));
-    float msecTotal = 0;
-
-    // cublas
-    cublasHandle_t blas_handle;  
-    CUBLAS_CHECK(cublasCreate(&blas_handle));
+    
     // CUBLAS_CHECK(cublasSetMathMode( blas_handle, CUBLAS_TENSOR_OP_MATH ));
     // CUDA_CHECK(cudaMemcpy( d_C, h_refC, c_alloc, cudaMemcpyHostToDevice));
-    for (int run = 0 ; run < n_loops; run ++ ) {
-        CUBLAS_CHECK(
-            cublasDgemm (blas_handle, CUBLAS_OP_N, CUBLAS_OP_N, 
-                N, M, K, &alpha, 
-                d_B, ldb, d_A, lda, &beta, d_C, ldc
-            )
-        );
+  #pragma omp parallel num_threads(2)
+  {
+    if (omp_get_thread_num() == 1)
+    {
+      for(int i=0; i<10;i++)
+      {
+        unsigned int power1;
+        result=nvmlDeviceGetPowerUsage(device,&power1);
+        // cuda_status = cudaDeviceSynchronize();
+        cudaDeviceProp prop;
+        cudaGetDeviceProperties ( &prop, 0 );
+        assert(NVML_SUCCESS == result);
+        printf("%d power  %u W in requency %d MHz\n", i,
+                        power1/1000, prop.clockRate/1000);
+        sleep(1);
+      }
     }
-    
-    CUDA_CHECK(cudaEventRecord(start));
-    for (int run = 0 ; run < n_loops; run ++ ) {
-        CUBLAS_CHECK(
-            cublasDgemm (blas_handle, CUBLAS_OP_N, CUBLAS_OP_N, 
-                N, M, K, &alpha, 
-                d_B, ldb, d_A, lda, &beta, d_C, ldc
-            )
-        );
-    }
-    CUDA_CHECK(cudaEventRecord(stop));
-    CUDA_CHECK(cudaEventSynchronize(stop));
-    CUDA_CHECK(cudaEventElapsedTime(&msecTotal, start, stop));
+    if (omp_get_thread_num() == 0){
+        cudaEvent_t start, stop;
+        CUDA_CHECK(cudaEventCreate(&start));
+        CUDA_CHECK(cudaEventCreate(&stop));
+        float msecTotal = 0;
 
+        // cublas
+        cublasHandle_t blas_handle;  
+        CUBLAS_CHECK(cublasCreate(&blas_handle));
+        for (int run = 0 ; run < n_loops; run ++ ) {
+            CUBLAS_CHECK(
+                cublasDgemm (blas_handle, CUBLAS_OP_N, CUBLAS_OP_N, 
+                    N, M, K, &alpha, 
+                    d_B, ldb, d_A, lda, &beta, d_C, ldc
+                )
+            );
+        }
+        
+        CUDA_CHECK(cudaEventRecord(start));
+        for (int run = 0 ; run < n_loops; run ++ ) {
+            CUBLAS_CHECK(
+                cublasDgemm (blas_handle, CUBLAS_OP_N, CUBLAS_OP_N, 
+                    N, M, K, &alpha, 
+                    d_B, ldb, d_A, lda, &beta, d_C, ldc
+                )
+            );
+        }
+        CUDA_CHECK(cudaEventRecord(stop));
+        CUDA_CHECK(cudaEventSynchronize(stop));
+        CUDA_CHECK(cudaEventElapsedTime(&msecTotal, start, stop));
+        float latency = msecTotal;
+        float tflops = 2.0 * M * N * K / latency / 1e6 * n_loops/1000;
+        printf("CUBLAS, M: %d, N: %d, K: %d, perf: %.2f tflops,  latency: %.6f ms, power from %u W to %u W\n", 
+                          M, N, K, tflops, latency / n_loops, power1/1000, power2/1000);
+        CUBLAS_CHECK(cublasDestroy(blas_handle)); 
+    }
+  }
     cudaDeviceSynchronize();
-  result=nvmlDeviceGetPowerUsage(device,&power2);
-  assert(NVML_SUCCESS == result);
-  nvmlShutdown();
 
     CUDA_CHECK(cudaMemcpy( h_C, d_C, c_alloc, cudaMemcpyDeviceToHost));
-    CUBLAS_CHECK(cublasDestroy(blas_handle)); 
-
-    float latency = msecTotal;
-    float tflops = 2.0 * M * N * K / latency / 1e6 * n_loops/1000;
-    printf("CUBLAS, M: %d, N: %d, K: %d, perf: %.2f tflops,  latency: %.6f ms, power from %u W to %u W\n", 
-                      M, N, K,                  tflops,  latency / n_loops, power1/1000, power2/1000);
-    // printf("%f, ", gflops);
     
-    // // cblas
-    // cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N, K, alpha, h_A, lda, h_B, ldb, beta, h_refC, ldc);
 
-    // double eps = 1.e-6;  // machine zero
-    // bool correct = true;
-    // for (int i = 0; i < M * N; i++) {
-    //     double abs_err = fabs(h_C[i] - h_refC[i]);
-    //     double dot_length = M;
-    //     double abs_val = fabs(h_C[i]);
-    //     double rel_err = abs_err / abs_val / dot_length;
-    //     if (rel_err > eps) {
-    //         printf("Error! Matrix[%05d]=%.8f, ref=%.8f error term is > %E\n",
-    //                 i, h_C[i], h_refC[i], eps);
-    //         correct = false;
-    //         break;
-    //     }
-    // }
-    // printf("%s\n", correct ? "Result= PASS" : "Result= FAIL");
 
     // Free Memory
     cudaFree(d_A);
     cudaFree(d_B);
     cudaFree(d_C);
     
+
     free(h_A);
     free(h_B);
     free(h_C);
