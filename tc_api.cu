@@ -146,13 +146,13 @@ int main(int argc, char const *argv[])
       for(int i=0; i<10;i++)
       {
         unsigned int power1;
+        unsigned int clock;
         result=nvmlDeviceGetPowerUsage(device,&power1);
+        result=nvmlDeviceGetClock(device,NVML_CLOCK_SM,NVML_CLOCK_ID_CURRENT,&clock);
         // cuda_status = cudaDeviceSynchronize();
-        cudaDeviceProp prop;
-        cudaGetDeviceProperties ( &prop, 0 );
         assert(NVML_SUCCESS == result);
         printf("%d power  %u W in requency %d MHz\n", i,
-                        power1/1000, prop.clockRate/1000);
+                        power1/1000, clock);
         sleep(1);
       }
     }

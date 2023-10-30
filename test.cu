@@ -99,7 +99,7 @@ void becnmark_cublas(int M, int N, int K, int n_loops) {
     CUDA_CHECK(cudaMemset( d_C, 0.f, c_alloc));
 
     // Initialization power
-    unsigned int power1, power2;
+    unsigned int power1;
     nvmlReturn_t result;
   nvmlDevice_t device;
   nvmlEnableState_t mode;
@@ -124,13 +124,15 @@ void becnmark_cublas(int M, int N, int K, int n_loops) {
       for(int i=0; i<10;i++)
       {
         unsigned int power1;
+        unsigned int clock;
         result=nvmlDeviceGetPowerUsage(device,&power1);
+        result=nvmlDeviceGetClock(device,NVML_CLOCK_SM,NVML_CLOCK_ID_CURRENT,&clock);
         // cuda_status = cudaDeviceSynchronize();
-        cudaDeviceProp prop;
-        cudaGetDeviceProperties ( &prop, 0 );
+        // cudaDeviceProp prop;
+        // cudaGetDeviceProperties ( &prop, 0 );
         assert(NVML_SUCCESS == result);
         printf("%d power  %u W in requency %d MHz\n", i,
-                        power1/1000, prop.clockRate/1000);
+                        power1/1000, clock);
         sleep(1);
       }
     }
@@ -166,8 +168,8 @@ void becnmark_cublas(int M, int N, int K, int n_loops) {
         CUDA_CHECK(cudaEventElapsedTime(&msecTotal, start, stop));
         float latency = msecTotal;
         float tflops = 2.0 * M * N * K / latency / 1e6 * n_loops/1000;
-        printf("CUBLAS, M: %d, N: %d, K: %d, perf: %.2f tflops,  latency: %.6f ms, power from %u W to %u W\n", 
-                          M, N, K, tflops, latency / n_loops, power1/1000, power2/1000);
+        printf("CUBLAS, M: %d, N: %d, K: %d, perf: %.2f tflops,  latency: %.6f ms\n", 
+                          M, N, K, tflops, latency / n_loops);
         CUBLAS_CHECK(cublasDestroy(blas_handle)); 
     }
   }
