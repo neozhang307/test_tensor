@@ -147,12 +147,14 @@ int main(int argc, char const *argv[])
       {
         unsigned int power1;
         unsigned int clock;
+        unsigned int temp;
         result=nvmlDeviceGetPowerUsage(device,&power1);
         result=nvmlDeviceGetClock(device,NVML_CLOCK_SM,NVML_CLOCK_ID_CURRENT,&clock);
+        result=nvmlDeviceGetTemperature (  device,  NVML_TEMPERATURE_GPU, &temp );
         // cuda_status = cudaDeviceSynchronize();
         assert(NVML_SUCCESS == result);
-        printf("%d power  %u W in requency %d MHz\n", i,
-                        power1/1000, clock);
+        printf("%d power  %u W in requency %d MHz in %d temp\n", i,
+                        power1/1000, clock, temp);
         sleep(1);
       }
     }
