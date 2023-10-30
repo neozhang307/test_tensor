@@ -33,7 +33,8 @@
 // #define M_TOTAL (M * M_TILES)
 // #define N_TOTAL (N * N_TILES)
 // #define K_TOTAL (K * K_TILES)
-#define ILP 4
+#define ILPA 4
+#define ILPB 4
 //__global__ void WMMAINT8()
 #include "repeat.h"
 using namespace nvcuda;
@@ -51,23 +52,30 @@ using namespace nvcuda;
 __global__ void WMMAF16TensorCore(double*A, double*B,  double*C, int tile_c)
 {
 
-  wmma::fragment<wmma::matrix_a, M, N, K, double, wmma::row_major> a_frag[ILP];
-  wmma::fragment<wmma::matrix_b, M, N, K, double, wmma::col_major> b_frag;
-  wmma::fragment<wmma::accumulator, M, N, K, double> c_frag[ILP];
+  wmma::fragment<wmma::matrix_a, M, N, K, double, wmma::row_major> a_frag[ILPA];
+  wmma::fragment<wmma::matrix_b, M, N, K, double, wmma::col_major> b_frag[ILPB];
+  wmma::fragment<wmma::accumulator, M, N, K, double> c_frag[ILPA][ILPB];
   int ix = (blockIdx.x * blockDim.x + threadIdx.x)/32;
   int iy = (blockIdx.y * blockDim.y + threadIdx.y);
   int id_warps=threadIdx.x/32;
   #pragma unroll
-  for(int i=0; i<ILP;i++)
+  for(int i=0; i<ILPA;i++)
   {
-    wmma::fill_fragment(c_frag[i], 0.0f);
     wmma::load_matrix_sync(a_frag[i], A +8*(ix) + tile_c*(iy+i)*8, tile_c);
   }
-
- 
-
-  wmma::load_matrix_sync(b_frag, B +tile_c*(iy)+8*(ix) , 8);
-
+  for(int i=0; i<ILPA;i++)
+  {
+    #pragma unroll
+    for(int j=0; j<ILPB;j++)
+    {
+      wmma::fill_fragment(c_frag[i][j], 0.0f);
+    }
+  }
+  #pragma unroll
+  for(int i=0; i<ILPB;i++)
+  {
+    wmma::load_matrix_sync(b_frag[i], B +tile_c*(iy+i)+8*(ix) , 8);
+  }
 
   // wmma::load_matrix_sync(a_frag, A+id_warps*tile_c+8*blockIdx.x, tile_c);
 
@@ -75,14 +83,19 @@ __global__ void WMMAF16TensorCore(double*A, double*B,  double*C, int tile_c)
 
   {
     {
-      repeat1024(_Pragma("unroll")for(int i=0; i<ILP;i++)wmma::mma_sync(c_frag[i], a_frag[i], b_frag, c_frag[i]););
+      repeat1024(
+        _Pragma("unroll")for(int j=0; j<ILPB;j++){_Pragma("unroll")for(int i=0; i<ILPA;i++){wmma::mma_sync(c_frag[i][j], a_frag[i], b_frag[j], c_frag[i][j]);}}
+          );
     }
   }
 
-  #pragma unroll
-  for(int i=0; i<ILP;i++)
+  for(int i=0; i<ILPA;i++)
   {
-    wmma::store_matrix_sync(C+N*(blockIdx.x+i*gridDim.x) + tile_c*(id_warps)*8, c_frag[i], tile_c, wmma::mem_row_major);
+    #pragma unroll
+    for(int j=0; j<ILPB;j++)
+    {
+      wmma::store_matrix_sync(C+N*(blockIdx.x+i*gridDim.x) + tile_c*(id_warps+j)*8, c_frag[i][j], tile_c, wmma::mem_row_major);
+    }
   }
   // printf("%d,%d\n",id_warps,threadIdx.x);
 } 
@@ -94,9 +107,9 @@ int main(int argc, char const *argv[])
   int sm_count;
   cudaDeviceGetAttribute ( &sm_count, cudaDevAttrMultiProcessorCount,0 );
   int num_warps=4;
-  int tilesC=sm_count*ILP*N;
+  int tilesC=sm_count*ILPA*ILPB*N;
   int sizeofmem=sizeof(double)*16*16;
-  int sizeofrmem=sizeofmem*sm_count*ILP*num_warps;
+  int sizeofrmem=sizeofmem*sm_count*ILPA*ILPB*num_warps;
 
   double*h_mat=(double*)malloc(sizeofrmem);
   double*h_mat2=(double*)malloc(sizeofrmem);
@@ -108,7 +121,7 @@ int main(int argc, char const *argv[])
   cudaMalloc((void**)&d_C, sizeofrmem);
   double*h_C=(double*)malloc(sizeofrmem);
 
-  for(int i=0; i<sm_count*ILP*16*16*num_warps; i++)
+  for(int i=0; i<sm_count*ILPA*ILPB*16*16*num_warps; i++)
   {
     h_mat[i]=i%20+0.1*i;//+1;
   }
@@ -132,14 +145,14 @@ int main(int argc, char const *argv[])
     {
       for(int i=0; i<10;i++)
       {
-        unsigned int power1, power2;
+        unsigned int power1;
         result=nvmlDeviceGetPowerUsage(device,&power1);
         // cuda_status = cudaDeviceSynchronize();
-        result=nvmlDeviceGetPowerUsage(device,&power2);
-
+        cudaDeviceProp prop;
+        cudaGetDeviceProperties ( &prop, 0 );
         assert(NVML_SUCCESS == result);
-        printf("%d power from %u W to %u W\n", i,
-                        power1/1000, power2/1000);
+        printf("%d power  %u W in requency %d MHz\n", i,
+                        power1/1000, prop.clockRate/1000);
         sleep(1);
       }
     }
@@ -160,7 +173,7 @@ int main(int argc, char const *argv[])
       cudaEventSynchronize(stop);
       cudaEventElapsedTime(&milliseconds, start, stop);
       printf("[+] GPU(with Tensor Cores) Elapsed Time: %f ms\n", milliseconds);
-      printf("[+] TFLOPS: %.2f\n", ((float)M*N*K*sm_count*ILP*num_warps )*1024*2*outrepeat / milliseconds / 1e9);
+      printf("[+] TFLOPS: %.2f\n", ((float)M*N*K*sm_count*ILPA*ILPB*num_warps )*1024*2*outrepeat / milliseconds / 1e9);
     }
   }
   nvmlShutdown();
